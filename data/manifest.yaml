@@ -1,0 +1,45 @@
+dataset_release:
+  version: "1.0.0"
+  doi: "10.5281/zenodo.23224668"
+  record_url: "https://doi.org/10.5281/zenodo.23224668"
+
+datasets:
+  synthetic:
+    files:
+      - name: sim_counts_10k_20_meta.csv.gz
+        sha256: "3b205ab34fbf9dd69aee184bf60d21764efa46b43e19370cb0e5ed18bfaa84d6"
+        url: "https://zenodo.org/records/23224668/files/sim_counts_10k_20_meta.csv.gz?download=1"
+
+      - name: sim_metadata_10k_20_meta.csv
+        sha256: "694093ef350f8c589d3eac1a3be2c11bf1222ea9a1aada7e23ecbdf1ec272e42"
+        url: "https://zenodo.org/records/23224668/files/sim_metadata_10k_20_meta.csv?download=1"
+
+  emp500:
+    files:
+      - name: feature_emp500_subset.csv
+        sha256: "58aed620d0dd9ca1216586364cd1c7acfd17c9dbeb2c234a36f334388acce5ac"
+        url: "https://zenodo.org/records/23224668/files/feature_emp500_subset.csv?download=1"
+
+      - name: metadata_emp500_subset.csv
+        sha256: "e413aed5c92aea4a8d8322c09d9425c733631c6f604e0a30113749b9fb2733d0"
+        url: "https://zenodo.org/records/23224668/files/metadata_emp500_subset.csv?download=1"
+
+  sc:
+    files:
+      - name: feature_sc.csv
+        sha256: "cf1aeee4783917f21440eb41450e43e9c876d8e25832ff6f5151ecd2de19ed4c"
+        url: "https://zenodo.org/records/23224668/files/feature_sc.csv?download=1"
+
+      - name: metadata_sc.csv
+        sha256: "e8f32aab58a870e4ce739b0db4aa74ca05ac63bc04459c1bbfc6d9161f9459e2"
+        url: "https://zenodo.org/records/23224668/files/metadata_sc.csv?download=1"
+
+  pseq:
+    files:
+      - name: pseq_feature_table_subset.csv
+        sha256: "da75b77d4939941bff6c220930d26c8851b85b9bb38726c5e31babf53a7e337d"
+        url: "https://zenodo.org/records/23224668/files/pseq_feature_table_subset.csv?download=1"
+
+      - name: pseq_meta_data_subset.csv
+        sha256: "1a34889b781e883e7d521b596bcba9b51a534597e6b4de520d174bf13e2d48f6"
+        url: "pseq_meta_data_subset.csv"
