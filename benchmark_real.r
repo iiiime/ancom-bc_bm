@@ -1,11 +1,20 @@
+#!/usr/bin/env Rscript
+
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_arg) > 0) {
+  dirname(normalizePath(sub("^--file=", "", script_arg[[1]]), mustWork = FALSE))
+} else {
+  normalizePath(".", mustWork = FALSE)
+}
+source(file.path(script_dir, "benchmark_io.R"))
+
 library(ANCOMBC)
 library(tidyverse)
-library(parallel)
 
 # setup
-abn <- "feature_sc.csv"
-meta <- "metadata_sc.csv"
-OUT <- "benchmark_real_sc.csv"
+abn <- input_path("feature_sc.csv")
+meta <- input_path("metadata_sc.csv")
+OUT <- output_path("benchmark_real_sc.csv")
 N_REPEATS <- 3
 
 cat(sprintf("\n=================================================\n"))
@@ -90,11 +99,12 @@ for (i in 1:N_REPEATS) {
     Time_Sec = as.numeric(elapsed_sec),
     Memory_Used_MB = mem_diff_mb,
     Status = status,
+    Error = if (status == "Failed") as.character(error_msg) else "",
     Timestamp = as.character(Sys.time())
   )
   
   results_log <- rbind(results_log, entry)
-  write.csv(results_log, OUT, row.names = FALSE)
+  atomic_write_csv(results_log, OUT)
 }
 
 

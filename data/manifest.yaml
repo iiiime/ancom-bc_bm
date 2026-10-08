@@ -42,4 +42,4 @@ datasets:
 
       - name: pseq_meta_data_subset.csv
         sha256: "1a34889b781e883e7d521b596bcba9b51a534597e6b4de520d174bf13e2d48f6"
-        url: "pseq_meta_data_subset.csv"
+        url: "https://zenodo.org/records/23224668/files/pseq_meta_data_subset.csv?download=1"

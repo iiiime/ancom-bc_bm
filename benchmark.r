@@ -6,13 +6,20 @@
 # Memory: gc() + OS-level RSS
 # Single-thread: n_cl=1
 
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_arg) > 0) {
+  dirname(normalizePath(sub("^--file=", "", script_arg[[1]]), mustWork = FALSE))
+} else {
+  normalizePath(".", mustWork = FALSE)
+}
+source(file.path(script_dir, "benchmark_io.R"))
 
 library(ANCOMBC)
 library(tidyverse)
 
-COUNTS_FILE <- "sim_counts_10k_20_meta.csv.gz"
-META_FILE <- "sim_metadata_10k_20_meta.csv"
-OUTPUT <- "bench_r_results_pseudo_sens.csv"
+COUNTS_FILE <- input_path("sim_counts_10k_20_meta.csv.gz")
+META_FILE <- input_path("sim_metadata_10k_20_meta.csv")
+OUTPUT <- output_path("bench_r_results_pseudo_sens.csv")
 N_REPEATS <- 3
 
 
@@ -58,7 +65,9 @@ build_formula <- function(n_cov) {
 
 
 read_proc_status <- function() {
-  # VmHWM not available
+  if (!file.exists("/proc/self/status")) {
+    return(list(VmRSS_MB = NA_real_))
+  }
   lines <- readLines("/proc/self/status", warn = FALSE)
   vmrss_line <- grep("^VmRSS:", lines, value = TRUE)
 
@@ -74,7 +83,7 @@ read_proc_status <- function() {
 
 
 run_ancombc_r <- function(counts_mat, meta_df, formula_str) {
-  res = ancombc(
+  res <- ancombc(
     data = counts_mat,
     meta_data = meta_df,
     formula = formula_str,
@@ -94,7 +103,7 @@ run_ancombc_r <- function(counts_mat, meta_df, formula_str) {
 
 run_ancombc2_r <- function(counts_mat, meta_df, formula_str) {
   meta_df$cat_cov_1 <- factor(meta_df$cat_cov_1)
-  res = ancombc2(
+  res <- ancombc2(
     data = counts_mat,
     meta_data = meta_df,
     fix_formula = formula_str,
@@ -124,18 +133,18 @@ run_one <- function(counts_mat, meta_df, formula_str, impl) {
 
   status <- "Success"
   error_msg <- NA
-  res = NULL
+  res <- NULL
 
   tryCatch({
     if (impl == "ancombc") {
-      res = run_ancombc_r(counts_mat, meta_df, formula_str)
+      res <- run_ancombc_r(counts_mat, meta_df, formula_str)
     } else if (impl == "ancombc2") {
-      res = run_ancombc2_r(counts_mat, meta_df, formula_str)
+      res <- run_ancombc2_r(counts_mat, meta_df, formula_str)
     }
   }, error = function(e) {
     status <<- "Failed"
     error_msg <<- substr(as.character(e$message), 1, 200)
-    res = NULL
+    res <<- NULL
   })
 
   end_time <- proc.time()
@@ -215,8 +224,11 @@ for (idx in seq_len(nrow(scenarios))) {
     w <- run_one(sub_counts, sub_meta, formula_str, impl)
     if (w$success) {
       cat(sprintf("OK (%.2fs)\n", w$time_sec))
-      fname = paste0("./benchmark_sim_res/", impl, "_s_", curr_n, "_f_", curr_p, "_cov_", n_cov, ".csv")
-      write.csv(w$res, fname)
+      fname <- output_path(file.path(
+        "simulation",
+        sprintf("impl_%s_s_%d_f_%d_cov_%d.csv", impl, curr_n, curr_p, n_cov)
+      ))
+      atomic_write_csv(w$res, fname, row.names = TRUE)
     } else {
       cat(sprintf("FAILED: %s\n", w$error))
       next
@@ -261,14 +273,14 @@ for (idx in seq_len(nrow(scenarios))) {
       )
 
       results_log <- rbind(results_log, entry)
-      write.csv(results_log, OUTPUT, row.names = FALSE)
+      atomic_write_csv(results_log, OUTPUT)
     }
   }
 
   gc()
 }
 
-write.csv(results_log, OUTPUT, row.names = FALSE)
+atomic_write_csv(results_log, OUTPUT)
 cat(sprintf("\n%s\n", paste(rep("=", 60), collapse = "")))
 cat(sprintf("Benchmark complete. Results saved to %s\n", OUTPUT))
 

@@ -15,24 +15,20 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-import sys
 import time
-import json
 import threading
 import tracemalloc
-import importlib.util
-import numpy as np
 import pandas as pd
 import psutil
 
 
 from skbio.stats.composition._ancombc2 import ancombc, ancombc2
+from benchmark_io import atomic_write_csv, input_path, output_path
 
 COUNTS_FILE = "sim_counts_10k_20_meta.csv.gz"
 META_FILE = "sim_metadata_10k_20_meta.csv"
-OUTPUT = "bench_py_results_pseudo_sens.csv"
+OUTPUT = output_path("bench_py_results_pseudo_sens.csv")
 N_REPEATS = 3
-WARMUP = 1
 
 
 scenarios_vary_n = pd.DataFrame({
@@ -82,9 +78,9 @@ def build_formula(n_cov):
 
 def sensitivity(main, results):
     result = main.copy()
-    signif = pd.concat([x for x in results], axis=1)
-    result['Pass'] = signif.eq(signif.iloc[:, 0], axis=0).all(axis=1)
-    result['Robust'] = result['Signif'] & result['Pass']
+    signif = pd.concat(results, axis=1)
+    result["Pass"] = signif.eq(signif.iloc[:, 0], axis=0).all(axis=1)
+    result["Robust"] = result["Signif"] & result["Pass"]
     return result
 
 
@@ -142,9 +138,10 @@ def run_one(table, metadata, formula, impl):
     rss_sampler = RSSSampler(interval_ms=50)
     rss_sampler.start()
 
-    start_time = time.time()
+    start_time = time.perf_counter()
     success = False
     error_msg = None
+    res = None
 
     try:
         with threadpool_limits(limits=1):
@@ -157,23 +154,28 @@ def run_one(table, metadata, formula, impl):
                     alpha=0.05,
                 ).result
             elif impl == "ancombc2":
-                fits = [ancombc2(table+1, metadata, formula=formula, pseudocount=p).res['Signif'] for p in (0.1, 0.5, 1)]
+                fits = [
+                    ancombc2(
+                        table + 1, metadata, formula=formula, pseudocount=p
+                    ).res["Signif"]
+                    for p in (0.1, 0.5, 1)
+                ]
                 res = ancombc2(
-                    table+1,
+                    table + 1,
                     metadata,
                     formula=formula,
                     p_adjust="holm",
                     alpha=0.05,
                     pseudocount=1,
                 ).result
-                res_sens = sensitivity(res, fits)
+                res = sensitivity(res, fits)
             else:
                 raise ValueError(f"Unknown impl: {impl}")
         success = True
     except Exception as e:
         error_msg = str(e)[:200]
 
-    end_time = time.time()
+    end_time = time.perf_counter()
     rss_info = rss_sampler.stop()
     _, peak_mem = tracemalloc.get_traced_memory()
     tracemalloc.stop()
@@ -195,15 +197,17 @@ def run_one(table, metadata, formula, impl):
 
 def main():
     print("Loading data...")
-    counts_df = pd.read_csv(COUNTS_FILE, index_col=0)
-    meta_df = pd.read_csv(META_FILE)
+    counts_path = input_path(COUNTS_FILE)
+    metadata_path = input_path(META_FILE)
+    counts_df = pd.read_csv(counts_path, index_col=0)
+    meta_df = pd.read_csv(metadata_path)
     meta_df.index = "S" + (meta_df.index + 1).astype(str)
     meta_df = meta_df.loc[counts_df.index]
     print(f"  Data loaded: {counts_df.shape[0]} samples × {counts_df.shape[1]} features")
 
     results_log = []
     # Load existing results if checkpoint exists (for resume)
-    if os.path.exists(OUTPUT):
+    if OUTPUT.exists():
         existing = pd.read_csv(OUTPUT)
         results_log = existing.to_dict("records")
         done_keys = set(
@@ -238,7 +242,10 @@ def main():
             print(f"  warm-up... ", end="", flush=True)
             w = run_one(sub_counts, sub_meta, formula, impl)
             if w["success"]:
-                w["result"].to_csv(f"~/proj/ancombc/ancom-bc_bm-main/benchmark_sim_res/impl_{impl}_s_{curr_n}_f_{curr_p}_cov_{n_cov}.csv")
+                warmup_output = output_path(
+                    f"simulation/impl_{impl}_s_{curr_n}_f_{curr_p}_cov_{n_cov}.csv"
+                )
+                atomic_write_csv(w["result"], warmup_output)
                 print(f"OK ({w['time_sec']:.2f}s)")
             else:
                 print(f"FAILED: {w['error']}")
@@ -246,7 +253,7 @@ def main():
 
             # Measured runs
             for i in range(1, N_REPEATS + 1):
-                key = (regime, curr_n, curr_p, impl, i)
+                key = (regime, curr_n, curr_p, f"Py_{impl}", i)
                 if key in done_keys:
                     print(f"  run {i}/{N_REPEATS} (cached)")
                     continue
@@ -283,14 +290,14 @@ def main():
                 results_log.append(entry)
 
                 # Checkpoint after each run
-                pd.DataFrame(results_log).to_csv(OUTPUT, index=False)
+                atomic_write_csv(pd.DataFrame(results_log), OUTPUT, index=False)
 
         # Force garbage collection between scenarios
         import gc
         gc.collect()
 
     # Final save
-    pd.DataFrame(results_log).to_csv(OUTPUT, index=False)
+    atomic_write_csv(pd.DataFrame(results_log), OUTPUT, index=False)
     print(f"\n{'='*60}")
     print(f"Benchmark complete. Results saved to {OUTPUT}")
 

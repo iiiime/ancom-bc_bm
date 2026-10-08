@@ -1,43 +1,40 @@
 #!/usr/bin/env python3
-"""
-Benchmarks 4 Python differential abundance methods on the EMP500 real microbiome
-dataset (8,351 taxa x 753 samples, 97% sparsity):
+"""Benchmark Python differential-abundance methods on the EMP500 dataset.
+
+The available method runners are:
 
   1. ANCOM-BC and ANCOM-BC2 (scikit-bio)
   2. PyDESeq2 (pydeseq2 0.5.4)
   3. edgePython (edgepython 0.2.6)
   4. pyedger (pyedger 0.1.0)
 
-runtime and peak memory per method across 3 replicates
-formula: ~empo_3 + env_biome (14-level habitat + ~27-level biome after collinearity fix).
+The default configuration runs ANCOM-BC and ANCOM-BC2 for three replicates.
+The model formula is ``~ empo_3 + env_biome``.
 """
 
 import argparse
 import json
-import os
-import pickle
 import resource
 import subprocess
 import sys
 import time
 import warnings
 from datetime import datetime
-from itertools import combinations
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from benchmark_io import (
+    atomic_pickle_dump,
+    atomic_write_csv,
+    input_path,
+    load_pickle,
+    output_path,
+)
 
 warnings.filterwarnings("ignore")
 
 
-#WORK_DIR = "/emp500_python_benchmark"
-WORK_DIR = "./"
-RESULTS_DIR = os.path.join(WORK_DIR, "results")
-OUTPUT_DIR = "results"
-#SCRIPTS_DIR = os.path.join(OUTPUT_DIR, "scripts")
-
-#METHODS = ["ancombc", "edgepython", "pyedger", "pydeseq2"]
-#METHODS = ["ancombc", "ancombc2", "edgepython", "pyedger"]
 METHODS = ["ancombc", "ancombc2"]
 METHOD_LABELS = {
     "ancombc": "ANCOM-BC (Python)",
@@ -54,11 +51,11 @@ TIMEOUTS = {
     "edgepython": 1800,
     "pyedger": 1800,
 }
-RESULTS_CSV = os.path.join(RESULTS_DIR, "emp500_benchmark_py_ancombc.csv")
-PREPARED_DATA = os.path.join(WORK_DIR, "prepared_data.pkl")
+RESULTS_CSV = output_path("emp500_benchmark_py_ancombc.csv")
+PREPARED_DATA = output_path("cache/emp500_prepared.pkl")
 
 
-def fix_collinearity(meta_df, counts_df):
+def fix_collinearity(meta_df):
     """
     Iteratively merge collinear env_biome levels into 'Other' until the
     design matrix ~empo_3 + env_biome is full rank.
@@ -129,10 +126,10 @@ def fix_collinearity(meta_df, counts_df):
 
 
 def prepare_data():
-    """Download, clean, and prepare EMP500 data. Save to pickle."""
+    """Clean EMP500 CSV inputs and cache the prepared DataFrames."""
 
-    counts_csv = os.path.join(WORK_DIR, "feature_emp500_subset.csv")
-    meta_csv = os.path.join(WORK_DIR, "metadata_emp500_subset.csv")
+    counts_csv = input_path("feature_emp500_subset.csv")
+    meta_csv = input_path("metadata_emp500_subset.csv")
 
     counts_df = pd.read_csv(counts_csv, index_col=0)
     meta_df = pd.read_csv(meta_csv, index_col=0)
@@ -162,11 +159,10 @@ def prepare_data():
     print(f"  env_biome: {meta_df['env_biome'].nunique()} levels (before collinearity fix)")
     print(f"  Sparsity: {(counts_df == 0).sum().sum() / counts_df.size * 100:.1f}%")
 
-    meta_df = fix_collinearity(meta_df, counts_df)
+    meta_df = fix_collinearity(meta_df)
     print(f"  env_biome: {meta_df['env_biome'].nunique()} levels (after collinearity fix)")
 
-    with open(PREPARED_DATA, "wb") as f:
-        pickle.dump({"counts": counts_df, "meta": meta_df}, f)
+    atomic_pickle_dump({"counts": counts_df, "meta": meta_df}, PREPARED_DATA)
     print(f"  Saved prepared data: {PREPARED_DATA}")
 
     return counts_df, meta_df
@@ -174,8 +170,7 @@ def prepare_data():
 
 def load_prepared_data():
     """Load prepared data from pickle."""
-    with open(PREPARED_DATA, "rb") as f:
-        data = pickle.load(f)
+    data = load_pickle(PREPARED_DATA)
     return data["counts"], data["meta"]
 
 
@@ -217,7 +212,6 @@ def run_ancombc(counts_df, meta_df):
     empo3_mask = covariates.str.startswith("empo_3")
     empo3_res = result[empo3_mask]
 
-    n_coef = empo3_res.index.get_level_values("Covariate").nunique()
     taxa = empo3_res.index.get_level_values("FeatureID").unique()
 
     combined_p = {}
@@ -249,13 +243,12 @@ def run_ancombc2(counts_df, meta_df):
     table = counts_df + 1
     fits = [ancombc2(table, meta_df, formula="empo_3+env_biome", pseudocount=p).res['Signif'] for p in (0.1, 0.5, 1)]
     result = ancombc2(table=table, metadata=meta_df, formula="empo_3 + env_biome").result
-    res_sens = sensitivity(result, fits)
+    sensitivity(result, fits)
 
     covariates = result.index.get_level_values("Covariate")
     empo3_mask = covariates.str.startswith("empo_3")
     empo3_res = result[empo3_mask]
 
-    n_coef = empo3_res.index.get_level_values("Covariate").nunique()
     taxa = empo3_res.index.get_level_values("FeatureID").unique()
 
     combined_p = {}
@@ -417,8 +410,6 @@ def run_pyedger(counts_df, meta_df):
     df_test = len(empo3_indices)
     pvals = stats.chi2.sf(lr, df_test)
 
-    logfc = fit_full.coefficients[:, empo3_indices[0]] / np.log(2.0)
-
     qvals = bh_adjust(pvals)
     taxa = [str(i) for i in range(len(pvals))]
 
@@ -445,7 +436,7 @@ def run_single_method(method, replicate):
     counts_df, meta_df = load_prepared_data()
     runner = METHOD_RUNNERS[method]
 
-    start_time = time.time()
+    start_time = time.perf_counter()
     status = "SUCCESS"
     error_msg = ""
     n_sig = 0
@@ -453,15 +444,16 @@ def run_single_method(method, replicate):
 
     try:
         results = runner(counts_df, meta_df)
+        runtime = time.perf_counter() - start_time
         n_sig = int((results["q_value"] < 0.05).sum())
 
-        result_file = os.path.join(
-            RESULTS_DIR, f"emp500_{method}_rep{replicate}_results.pkl"
+        result_file = output_path(
+            f"emp500_{method}_rep{replicate}_results.csv.gz"
         )
-        with open(result_file, "wb") as f:
-            pickle.dump(results, f)
+        atomic_write_csv(results, result_file, index=False)
         print(f"  Results saved: {result_file} ({n_sig} sig / {n_total} taxa)")
     except Exception as e:
+        runtime = time.perf_counter() - start_time
         status = "ERROR"
         error_msg = str(e)[:500]
         print(f"  FAILED: {e}")
@@ -469,9 +461,11 @@ def run_single_method(method, replicate):
 
         traceback.print_exc()
 
-    runtime = time.time() - start_time
-    peak_mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    peak_mem_mb = peak_mem_kb / 1024.0 
+    peak_mem_raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        peak_mem_mb = peak_mem_raw / (1024.0 * 1024.0)
+    else:
+        peak_mem_mb = peak_mem_raw / 1024.0
 
     output = {
         "method": method,
@@ -492,7 +486,7 @@ def run_single_method(method, replicate):
 
 def load_existing_results():
     """Load existing results CSV for resume capability."""
-    if os.path.exists(RESULTS_CSV):
+    if RESULTS_CSV.exists():
         return pd.read_csv(RESULTS_CSV)
     return pd.DataFrame(columns=[
         "method", "replicate", "runtime_s", "peak_memory_MB",
@@ -501,11 +495,11 @@ def load_existing_results():
 
 
 def save_results(df):
-    df.to_csv(RESULTS_CSV, index=False)
+    atomic_write_csv(df, RESULTS_CSV, index=False)
 
 
 def run_full_benchmark():
-    if os.path.exists(PREPARED_DATA):
+    if PREPARED_DATA.exists():
         print(f"=== Using cached prepared data: {PREPARED_DATA} ===")
     else:
         print("=== Preparing EMP500 Data ===")
@@ -537,7 +531,7 @@ def run_full_benchmark():
             timeout = TIMEOUTS.get(method, 3600)
 
             cmd = [
-                sys.executable, os.path.abspath(__file__),
+                sys.executable, str(Path(__file__).resolve()),
                 "--run-method", method,
                 "--replicate", str(rep),
             ]
@@ -639,8 +633,8 @@ def generate_analysis(df):
         })
 
     summary_df = pd.DataFrame(summary_rows)
-    summary_csv = os.path.join(OUTPUT_DIR, "emp500_python_benchmark_summary.csv")
-    summary_df.to_csv(summary_csv, index=False)
+    summary_csv = output_path("emp500_python_benchmark_summary.csv")
+    atomic_write_csv(summary_df, summary_csv, index=False)
     print(f"Summary saved: {summary_csv}")
 
 
@@ -676,7 +670,7 @@ def generate_analysis(df):
 
         ax.invert_yaxis()
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "emp500_python_runtime_barplot.png"), dpi=150)
+        plt.savefig(output_path("emp500_python_runtime_barplot.png"), dpi=150)
         plt.close()
         print("Runtime barplot saved")
 
@@ -702,7 +696,7 @@ def generate_analysis(df):
 
         ax.invert_yaxis()
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "emp500_python_memory_barplot.png"), dpi=150)
+        plt.savefig(output_path("emp500_python_memory_barplot.png"), dpi=150)
         plt.close()
         print("Memory barplot saved")
 
@@ -723,7 +717,7 @@ def generate_analysis(df):
         ax.set_title("EMP500 Python Benchmark: Runtime vs Memory", fontsize=14)
         ax.grid(True, alpha=0.3, which="both")
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "emp500_python_runtime_memory_scatter.png"), dpi=150)
+        plt.savefig(output_path("emp500_python_runtime_memory_scatter.png"), dpi=150)
         plt.close()
         print("Scatter plot saved")
 
@@ -746,7 +740,7 @@ def generate_analysis(df):
 
         ax.invert_yaxis()
         plt.tight_layout()
-        plt.savefig(os.path.join(OUTPUT_DIR, "emp500_python_sig_taxa_barplot.png"), dpi=150)
+        plt.savefig(output_path("emp500_python_sig_taxa_barplot.png"), dpi=150)
         plt.close()
         print("Sig taxa barplot saved")
 
@@ -794,8 +788,6 @@ def generate_r_vs_python_comparison(py_df, r_csv):
     width = 0.35
     r_runtimes = [p["r_runtime"] for p in pairs]
     py_runtimes = [p["py_runtime"] for p in pairs]
-    labels = [f"{p['r_method']}\n(R)\nvs\n{p['py_method']}\n(Py)" for p in pairs]
-
     ax1.bar(x - width/2, r_runtimes, width, label="R", color="#0279EE", edgecolor="black", linewidth=0.5)
     ax1.bar(x + width/2, py_runtimes, width, label="Python", color="#E9ED4C", edgecolor="black", linewidth=0.5)
     ax1.set_ylabel("Runtime (seconds, log scale)", fontsize=11)
@@ -826,7 +818,11 @@ def generate_r_vs_python_comparison(py_df, r_csv):
 
     plt.suptitle("EMP500: R vs Python DA Method Comparison", fontsize=14, y=1.02)
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "emp500_python_r_vs_comparison.png"), dpi=150, bbox_inches="tight")
+    plt.savefig(
+        output_path("emp500_python_r_vs_comparison.png"),
+        dpi=150,
+        bbox_inches="tight",
+    )
     plt.close()
     print("R vs Python comparison plot saved")
 

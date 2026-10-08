@@ -187,6 +187,7 @@ run_maaslin2 <- function(counts, metadata) {
 
   tmp_dir <- tempfile("maaslin2_")
   dir.create(tmp_dir, recursive = TRUE)
+  on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
 
   counts_df <- as.data.frame(counts)
   meta_df <- as.data.frame(metadata)
@@ -222,7 +223,6 @@ run_maaslin2 <- function(counts, metadata) {
     mutate(q_value = p.adjust(p_value, method = "BH"))
   res_df <- data.frame(taxon = res_df$feature, p_value = res_df$p_value, q_value = res_df$q_value)
 
-  unlink(tmp_dir, recursive = TRUE)
   return(res_df)
 }
 
@@ -236,6 +236,7 @@ run_maaslin3 <- function(counts, metadata) {
 
   tmp_dir <- tempfile("maaslin3_")
   dir.create(tmp_dir, recursive = TRUE)
+  on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)
 
   counts_df <- as.data.frame(t(as.matrix(counts)))
   meta_df <- as.data.frame(metadata)
@@ -276,7 +277,6 @@ run_maaslin3 <- function(counts, metadata) {
     res_df <- data.frame(taxon = rownames(counts), p_value = NA, q_value = NA)
   }
 
-  unlink(tmp_dir, recursive = TRUE)
   return(res_df)
 }
 

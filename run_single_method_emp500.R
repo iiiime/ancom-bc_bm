@@ -1,11 +1,19 @@
 #!/usr/bin/env Rscript
 # run_single_method_emp500.R
 # Run a single DA method on EMP500 data.
-# Called as subprocess via /usr/bin/time -v for memory measurement.
+# Called as a subprocess via GNU time -v or BSD time -l for memory measurement.
 #
 # Usage:
 #   Rscript run_single_method_emp500.R --method aldex2 --replicate 1 \
 #     --data-dir /workspace/benchmark/data --output-dir /workspace/benchmark/results
+
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_dir <- if (length(script_arg) > 0) {
+  dirname(normalizePath(sub("^--file=", "", script_arg[[1]]), mustWork = FALSE))
+} else {
+  normalizePath(".", mustWork = FALSE)
+}
+source(file.path(script_dir, "benchmark_io.R"))
 
 # --- Parse command-line arguments ---
 parse_args <- function() {
@@ -13,9 +21,9 @@ parse_args <- function() {
   opt <- list(
     method = "aldex2",
     replicate = 1L,
-    data_dir = "/workspace/benchmark/data",
-    output_dir = "/workspace/benchmark/results",
-    wrapper_path = "method_wrappers_emp500.R"
+    data_dir = DATA_DIR,
+    output_dir = RESULTS_DIR,
+    wrapper_path = file.path(PROJECT_ROOT, "method_wrappers_emp500.R")
   )
   i <- 1
   while (i <= length(args)) {
@@ -41,14 +49,20 @@ cat(sprintf("[run_single_method] data-dir=%s output-dir=%s\n", opt$data_dir, opt
 
 dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
 
-# --- Load data ---
-data_file <- file.path(opt$data_dir, "emp500_sim.rds")
-if (!file.exists(data_file)) {
-  stop(sprintf("Data file not found: %s", data_file))
+# --- Load the published CSV data ---
+counts_file <- input_path("feature_emp500_subset.csv", opt$data_dir)
+metadata_file <- input_path("metadata_emp500_subset.csv", opt$data_dir)
+counts_by_sample <- read.csv(counts_file, row.names = 1, check.names = FALSE)
+metadata <- read.csv(metadata_file, row.names = 1, check.names = FALSE)
+
+common_samples <- intersect(rownames(counts_by_sample), rownames(metadata))
+if (length(common_samples) == 0) {
+  stop("Counts and metadata have no sample IDs in common.", call. = FALSE)
 }
-sim_data <- readRDS(data_file)
-counts <- sim_data$counts       # taxa x samples
-metadata <- sim_data$metadata   # samples x vars
+counts <- t(as.matrix(counts_by_sample[common_samples, , drop = FALSE]))
+metadata <- metadata[common_samples, c("empo_3", "env_biome"), drop = FALSE]
+metadata$empo_3 <- factor(metadata$empo_3)
+metadata$env_biome <- factor(metadata$env_biome)
 
 cat(sprintf("[run_single_method] Data: %d taxa x %d samples\n", nrow(counts), ncol(counts)))
 
@@ -103,10 +117,11 @@ result <- tryCatch(
     method_func <- method_funcs[[opt$method]]
     res <- method_func(counts, metadata)
 
-    out_file <- file.path(opt$output_dir,
-                          sprintf("emp500_%s_rep%d_results.rds",
-                                  opt$method, opt$replicate))
-    saveRDS(res, out_file)
+    out_file <- file.path(
+      opt$output_dir,
+      sprintf("emp500_%s_rep%d_results.csv", opt$method, opt$replicate)
+    )
+    atomic_write_csv(res, out_file)
     cat(sprintf("[run_single_method] Results saved to %s\n", out_file))
     cat(sprintf("[run_single_method] Results: %d taxa, %d significant (q<0.05)\n",
                 nrow(res), sum(res$q_value < 0.05, na.rm = TRUE)))
