@@ -29,6 +29,23 @@ Files whose checksums already match are skipped. Use `--force` to download
 them again, or `--output-dir PATH` to use a different destination. Run
 `python fetch_data.py --help` for all options.
 
+## Data verification
+
+After downloading, use `verify_data.py` to check that every selected file is
+present and matches the SHA-256 checksum recorded in the manifest. Verification
+does not access the network.
+
+```bash
+python verify_data.py # verify every dataset or selected datasets
+python verify_data.py synthetic
+python verify_data.py emp500 sc
+python verify_data.py --data-dir PATH # verify a custom download location
+```
+
+The verifier reports valid, missing, mismatched, and unreadable files. It exits
+with status `0` when every selected file is valid and status `1` if verification
+fails. Use `--quiet` to hide successful files.
+
 Dataset groups correspond to the benchmark entry points as follows:
 
 | Dataset | Used by |
@@ -55,6 +72,7 @@ python benchmark_real.py     # single-cell Python benchmark
 Rscript benchmark_real.r     # single-cell R benchmark
 python benchmark_emp.py      # EMP500 Python benchmark
 Rscript run_emp500_benchmark.R  # EMP500 R-method benchmark
+python verify_data.py        # verify downloaded dataset checksums
 ```
 
 
